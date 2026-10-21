@@ -17,7 +17,7 @@ static __global__ void vadd(const float* const a, const float* const b, float* c
 int main()
 {
     const int N = 100000000;
-    const double PEAK_GBS = 224.0;
+    const double PEAK_GBS = 671.0;
     const size_t bytes = N * sizeof(float);
 
     std::vector<float> h_a(N);
