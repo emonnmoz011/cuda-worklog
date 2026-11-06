@@ -3,3 +3,5 @@ saxpy
 reverse
 scatter
 *.ncu-rep
+transpose
+stencil
