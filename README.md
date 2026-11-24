@@ -69,3 +69,16 @@ each other. Only 1024 loses speed: one block is 32 warps and the SM allows
 
 For a memory-bound kernel the pipe is already near full, so regrouping
 threads does not help.
+
+## GEMM ladder — RTX 5070, N = 2048
+
+Baseline for all rungs: cuBLAS at **23,836 GFLOPS**.
+Theoretical FP32 peak is 37,990 GFLOPS (48 SMs x 128 cores x 2 x 3.09 GHz),
+so cuBLAS itself reaches 63% of peak.
+
+| Rung | GFLOPS | % of cuBLAS | Change |
+|---|---|---|---|
+| naive | 1,983 | 8.3 | baseline |
+
+Each output element reads a full row of A and a full column of B from
+global memory. At N = 2048 every element is fetched 2048 times.

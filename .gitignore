@@ -5,3 +5,4 @@ scatter
 *.ncu-rep
 transpose
 stencil
+gemm
