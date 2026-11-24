@@ -4,7 +4,8 @@
 
 #define TILE 32
 
-
+/*
+/////////// NAIVE Kernel of Matrix Multiplication ///////////
 __global__ void gemm_naive(const float* A, const float* B, float* C, int N)
 {
     int col = threadIdx.x + blockIdx.x * blockDim.x;
@@ -20,6 +21,42 @@ __global__ void gemm_naive(const float* A, const float* B, float* C, int N)
         C[row * N + col] = sum;
     }
 }
+//////////////////////////////////////////////////////////////
+*/
+
+
+////// Shared Memory Tiling of Matrix Multiplication /////////
+
+__global__ void gemm_shared(const float* A, const float* B, float* C, int N)
+{
+    __shared__ float sA[TILE][TILE];
+    __shared__ float sB[TILE][TILE];
+
+    int col = threadIdx.x + blockIdx.x * TILE;
+    int row = threadIdx.y + blockIdx.y * TILE;
+
+    float sum = 0.0f;
+
+    for (int t = 0; t < N/TILE; t++)
+    {
+        sA[threadIdx.y][threadIdx.x] = A[row * N + (t * TILE + threadIdx.x)];
+        sB[threadIdx.y][threadIdx.x] = B[(t * TILE + threadIdx.y) * N + col];
+        __syncthreads();
+
+        for(int k=0; k<TILE; k++)
+        {
+            sum += sA[threadIdx.y][k] * sB[k][threadIdx.x];
+        }
+
+        __syncthreads();
+    }
+
+    C[ row*N + col] = sum;
+    
+}
+
+
+
 
 
 int main()
@@ -54,19 +91,19 @@ int main()
 
 
 
-////////////Timing and Performance for the NAIVE Kenrel///////////////////
+////////////Timing and Performance for the shared Kenrel///////////////////
 
     cudaEvent_t start, stop;
 
     CHECK_CUDA(cudaEventCreate(&start));
     CHECK_CUDA(cudaEventCreate(&stop));
 
-    dim3 threads(32 , 32);
-    dim3 blocks((N + 31) / 32, (N + 31) / 32);
+    dim3 threads(TILE , TILE);
+    dim3 blocks((N + TILE - 1) / TILE, (N + TILE -1) / TILE);
 
     for (int i=0; i<5; i++)
     {
-        gemm_naive<<<blocks, threads>>>(d_A, d_B, d_C, N);
+        gemm_shared<<<blocks, threads>>>(d_A, d_B, d_C, N);
     }
 
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -74,7 +111,7 @@ int main()
 
     for (int i=0; i<20; i++)
     {
-        gemm_naive<<<blocks, threads>>>(d_A, d_B, d_C, N);
+        gemm_shared<<<blocks, threads>>>(d_A, d_B, d_C, N);
     }
 
     CHECK_CUDA(cudaGetLastError());
@@ -149,10 +186,10 @@ int main()
 
 
     double flops = 2.0 * N * N * N;
-    double gflops = flops / (total_ms/1000.0) / 1e9;
 
-    double cublas_flops = 2.0 * N * N * N;
-    double cublas_gflops = cublas_flops / (cublas_ms/1000.0) / 1e9;
+    double shared_gflops = flops / (total_ms/1000.0) / 1e9;
+
+    double cublas_gflops = flops / (cublas_ms/1000.0) / 1e9;
 
     CHECK_CUDA(cudaMemcpy(h_C.data(), d_C, bytes, cudaMemcpyDeviceToHost));
 
@@ -177,7 +214,7 @@ int main()
 
     
 
-    std::cout << "Naive Throughput: " << gflops<<"\n" ;
+    std::cout << "Shared GEMM Throughput: " << shared_gflops<<"\n" ;
     std::cout << "cuBLAS Throughput: " << cublas_gflops<<"\n" ;
     
 
