@@ -82,3 +82,5 @@ so cuBLAS itself reaches 63% of peak.
 
 Each output element reads a full row of A and a full column of B from
 global memory. At N = 2048 every element is fetched 2048 times.
+| shared tiling | 2,713 | 11.4 | +37% over naive. Tiles of A and B loaded once per block into shared memory, reused by all 1024 threads. |
+| 1D block tiling | 5,963 | 25.0 | +120%. Each thread computes 8 outputs in one column instead of 1, so one sB value is loaded and reused 8 times. 9 shared loads per 8 multiply-adds instead of 2 per 1. |
