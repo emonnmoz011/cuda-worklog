@@ -2,7 +2,7 @@
 #include <vector>
 #include <cublas_v2.h>
 
-#define TILE 32
+
 
 /*
 /////////// NAIVE Kernel of Matrix Multiplication ///////////
@@ -25,36 +25,65 @@ __global__ void gemm_naive(const float* A, const float* B, float* C, int N)
 */
 
 
+#define BM 64    // tile height — rows of C per block
+#define BN 32    // tile width — cols of C per block
+#define BK 32    // tile depth — the k-step size
+#define TM 8     // outputs per thread
+
+
 ////// Shared Memory Tiling of Matrix Multiplication /////////
 
-__global__ void gemm_shared(const float* A, const float* B, float* C, int N)
+__global__ void gemm_1d(const float* A, const float* B, float* C, int N)
 {
-    __shared__ float sA[TILE][TILE];
-    __shared__ float sB[TILE][TILE];
+    __shared__ float sA[BM][BK];
+    __shared__ float sB[BK][BN];
 
-    int col = threadIdx.x + blockIdx.x * TILE;
-    int row = threadIdx.y + blockIdx.y * TILE;
+    int threadCol = threadIdx.x % BN;
+    int threadRow = threadIdx.x / BN;
+    int firstRow  = threadRow * TM;
 
-    float sum = 0.0f;
+    int aRow = threadIdx.x / BK;
+    int aCol = threadIdx.x % BK;
+    int bRow = threadIdx.x / BN;
+    int bCol = threadIdx.x % BN;
 
-    for (int t = 0; t < N/TILE; t++)
+    // where this block's tile starts in the big matrices
+    int blockRow = blockIdx.y * BM;
+    int blockCol = blockIdx.x * BN;
+
+    float sums[TM] = {0.0f};
+
+    for (int t = 0; t < N / BK; t++)
     {
-        sA[threadIdx.y][threadIdx.x] = A[row * N + (t * TILE + threadIdx.x)];
-        sB[threadIdx.y][threadIdx.x] = B[(t * TILE + threadIdx.y) * N + col];
+        for(int offset = 0; offset < BM; offset += 8)
+        {
+            sA[aRow + offset][aCol] = A[(blockRow + aRow + offset)*N + (t * BK + aCol)];
+        }
+
+        for(int offset = 0; offset < BK; offset += 8)
+        {
+            sB[bRow + offset][bCol] = B[(t * BK + bRow + offset) * N + (blockCol + bCol)];
+        }
+
+        
+        // load sB — 4 iterations, step 8
         __syncthreads();
 
-        for(int k=0; k<TILE; k++)
+        for (int k = 0; k < BK; k++)
         {
-            sum += sA[threadIdx.y][k] * sB[k][threadIdx.x];
+            float bval = sB[k][threadCol];
+            for (int i = 0; i < TM; i++)
+                sums[i] += sA[firstRow + i][k] * bval;
         }
 
         __syncthreads();
     }
 
-    C[ row*N + col] = sum;
-    
+    for (int i=0; i<TM; i++)
+    {
+        C[(blockRow + firstRow + i) * N + blockCol + threadCol] = sums[i];
+    }
 }
-
 
 
 
@@ -98,12 +127,12 @@ int main()
     CHECK_CUDA(cudaEventCreate(&start));
     CHECK_CUDA(cudaEventCreate(&stop));
 
-    dim3 threads(TILE , TILE);
-    dim3 blocks((N + TILE - 1) / TILE, (N + TILE -1) / TILE);
+    dim3 threads(256);
+    dim3 blocks(N / BN, N / BM);
 
     for (int i=0; i<5; i++)
     {
-        gemm_shared<<<blocks, threads>>>(d_A, d_B, d_C, N);
+        gemm_1d<<<blocks, threads>>>(d_A, d_B, d_C, N);
     }
 
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -111,7 +140,7 @@ int main()
 
     for (int i=0; i<20; i++)
     {
-        gemm_shared<<<blocks, threads>>>(d_A, d_B, d_C, N);
+        gemm_1d<<<blocks, threads>>>(d_A, d_B, d_C, N);
     }
 
     CHECK_CUDA(cudaGetLastError());
@@ -187,7 +216,7 @@ int main()
 
     double flops = 2.0 * N * N * N;
 
-    double shared_gflops = flops / (total_ms/1000.0) / 1e9;
+    double gflops_1D = flops / (total_ms/1000.0) / 1e9;
 
     double cublas_gflops = flops / (cublas_ms/1000.0) / 1e9;
 
@@ -214,7 +243,7 @@ int main()
 
     
 
-    std::cout << "Shared GEMM Throughput: " << shared_gflops<<"\n" ;
+    std::cout << "1D GEMM Throughput: " << gflops_1D <<"\n" ;
     std::cout << "cuBLAS Throughput: " << cublas_gflops<<"\n" ;
     
 
